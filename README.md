@@ -61,7 +61,7 @@ Chicken breast
 Printed: Jun 23 2026
 ```
 
-## Common Posible Issue pitfall
+## Common Issue pitfall
 - Using the wrong ESP32 (e.g Using Bluetooth Low Energy)
 - Certain ESP32 will require to hold BOOT button during uploading
 - Printer doesn't support Bluetooth Classic/Require a proprietary app
