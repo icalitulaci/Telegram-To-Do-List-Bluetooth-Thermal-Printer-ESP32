@@ -9,7 +9,7 @@ What it can do?
 -  Continuous message polling
 -  Clean formatted output (bold, centered header, wrapped text)
 
-<img src="https://github.com/favicon.ico" width="48">
+<img src="https://github.com/icalitulaci/Telegram-To-Do-List-Printer/blob/main/Telegram-To-Do-List-Printer.webp?raw=true" >
 
 
 ---
