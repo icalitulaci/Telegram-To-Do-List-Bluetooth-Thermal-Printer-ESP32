@@ -3,9 +3,10 @@
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
 #include <BluetoothSerial.h>
+#include <esp_heap_caps.h>
 
 // ================= CONFIG =================
-// This is the initial setup for the ESP32 Telegram Printer.
+// This is the initial setup for the ESP32 Telegram Printer. 
 
 #define WIFI_SSID        "Your_WiFi_SSID"
 #define WIFI_PASSWORD    "Your_WiFi_PASSWORD"
@@ -17,7 +18,7 @@
 #define PRINTER_PIN      "1234"  // Change to "" if your printer does not require a PIN
 
 
-// insert the chat IDs of the telegram user to avoid any ddos attacks.
+// insert the chat IDs of the telegram user to avoid any ddos attacks. 
 const String allowedChats[] = {
   " 123456789",  // Replace with your Telegram chat ID
   "987654321"   // Add more chat IDs as needed
@@ -38,19 +39,7 @@ bool isAuthorized(String chatId) {
 
 const unsigned long TELEGRAM_CHECK_INTERVAL = 1000; // this is for checking new messages in telegram
 const unsigned long BT_RECOVERY_DELAY = 2000; // this is for delay between bluetooth & wifi
-
-// ---------- Stability ----------
-// The TLS handshake to Telegram needs a large CONTIGUOUS block of RAM. Over many
-// hours of polling the heap slowly fragments until that block can't be allocated
-// and getUpdates() silently stops working (bot appears online but ignores messages).
-// A clean reboot fully clears/defragments the heap. Telegram keeps unread messages
-// for 24h, so nothing sent during the ~3s reboot is lost.
-const unsigned long IDLE_REBOOT_MS = 10UL * 60 * 1000; // reboot after 10 min with no messages
-
-// Constant per-second polling fragments the heap even while messages keep arriving
-// (which keeps resetting the idle timer above). This is a second, unconditional
-// safety net: reboot at least once every MAX_UPTIME_MS no matter how active the chat is.
-const unsigned long MAX_UPTIME_MS = 6UL * 60 * 60 * 1000; // reboot at least every 6 hours
+const size_t MIN_LARGEST_FREE_BLOCK = 20000; // reboot if the largest contiguous free heap block drops below this (bytes)
 
 
 WiFiClientSecure secured_client;
@@ -58,7 +47,6 @@ UniversalTelegramBot bot(BOT_TOKEN, secured_client);
 BluetoothSerial SerialBT;
 
 unsigned long lastTelegramCheck = 0;
-unsigned long lastMessageTime = 0; // updated whenever a message is received
 
 
 
@@ -177,7 +165,7 @@ void leftAlign() {
   SerialBT.write(0);
 }
 
-void printWrapped(String text, int maxChars) {
+void printWrapped(String text, int maxChars) { 
 
   while (text.length() > 0) {
 
@@ -200,7 +188,7 @@ void printWrapped(String text, int maxChars) {
 
 
 // ---------- Print Telegram Text ----------
-// this helps to format the message that will be printed on the thermal printer.
+// this helps to format the message that will be printed on the thermal printer. 
 // In this scenario the message will only list what the user has sent along with the date of printing. You can modify this to your liking.
 
 void printTelegramText(String sender, String message) {
@@ -248,14 +236,17 @@ void printTelegramText(String sender, String message) {
 
 void processNewestMessage() {
 
+  unsigned long getUpdatesStart = millis();
   int count = bot.getUpdates(bot.last_message_received + 1);
+  Serial.printf("getUpdates() took %lu ms\n", millis() - getUpdatesStart);
+
+  if (secured_client.connected()) {
+    secured_client.stop();
+  }
 
   if (count <= 0) {
     return;
   }
-
-  // A message arrived — reset the idle timer so we don't reboot mid-use.
-  lastMessageTime = millis();
 
   int newest = count - 1;
 
@@ -287,8 +278,7 @@ void setup() {
   connectWiFi();
 
   secured_client.setInsecure();
-
-  lastMessageTime = millis(); // start the idle countdown fresh
+  secured_client.setHandshakeTimeout(15); // cap worst-case TLS handshake stall (default is 120s)
 
   Serial.println("Ready");
 }
@@ -303,26 +293,19 @@ void loop() {
 
     lastTelegramCheck = millis();
     Serial.println("Checking Messages");
+
+    size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    Serial.printf("Free heap: %u  Largest block: %u\n", ESP.getFreeHeap(), largestBlock);
+
+    if (largestBlock < MIN_LARGEST_FREE_BLOCK) {
+      Serial.println("Largest free heap block low - restarting to clear RAM");
+      delay(200);
+      ESP.restart();
+    }
   }
 
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
   }
-
-  // If no message has been received for a while, reboot to clear/defragment RAM.
-  // This keeps the bot responsive 24/7 without any complex heap tracking.
-  if (millis() - lastMessageTime >= IDLE_REBOOT_MS) {
-    Serial.println("No messages for a while — restarting to clear RAM");
-    delay(200);
-    ESP.restart();
-  }
-
-  // Even if messages keep arriving often enough to keep resetting the idle timer
-  // above, the constant per-second polling still fragments the heap over time.
-  // Force a reboot at least once every MAX_UPTIME_MS regardless of activity.
-  if (millis() >= MAX_UPTIME_MS) {
-    Serial.println("Max uptime reached — restarting to clear RAM");
-    delay(200);
-    ESP.restart();
-  }
 }
+

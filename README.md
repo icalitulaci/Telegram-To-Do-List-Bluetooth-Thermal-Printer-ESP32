@@ -8,7 +8,7 @@ What it can do?
 -  Auto WiFi reconnect
 -  Continuous message polling
 -  Clean formatted output (bold, centered header, wrapped text)
--  Auto-recovery for 24/7 use (reboots to clear RAM after periods of inactivity)
+-  Auto-recovery for 24/7 use (proactively reboots if RAM fragmentation gets dangerous)
 
 <img src="https://github.com/icalitulaci/Telegram-To-Do-List-Printer/blob/main/Telegram-To-Do-List-Printer.webp?raw=true" >
 
@@ -74,23 +74,27 @@ Printed: Jun 23 2026
 
 ## Changelog
 
-### Stability fix — bot stops responding after running for hours (memory / heap fragmentation)
-**Problem:** When left on 24/7, the bot would go silent after a number of hours. It stayed
-connected to WiFi but stopped reacting to Telegram messages. Cause: each secure (TLS) request
-to Telegram needs a large *contiguous* block of RAM, and over thousands of requests the heap
-slowly fragments until that block can no longer be allocated and `getUpdates()` silently fails.
+### Stability fix — bot stops responding / freezes during 24/7 use
+Running the bot continuously surfaced three separate issues, found by testing on real
+hardware and reading the actual Telegram/TLS library source:
 
-**Fix:** Added a simple, reliable auto-recovery — if no message is received for a set period
-(default **10 minutes**), the ESP32 reboots. A clean reboot fully clears and defragments RAM,
-so the bot is always working with a fresh heap. Telegram keeps unread messages for 24 hours, so
-anything sent during the ~3-second reboot is still delivered afterward — no messages are lost.
+1. **Stale connection crash.** `UniversalTelegramBot` intentionally leaves the TLS
+   connection open after a message is found (documented in its own source), and expects
+   the caller to close it. The sketch never did, which could corrupt the connection state
+   on the next request and silently crash the main loop with no error output. Fixed by
+   calling `secured_client.stop()` after every `getUpdates()` call.
+2. **120-second TLS handshake stalls.** `WiFiClientSecure` defaults to a 120-second
+   handshake timeout. An occasional slow/failed handshake could freeze the entire device
+   for up to 2 minutes. Fixed with `secured_client.setHandshakeTimeout(15)` in `setup()`,
+   capping the worst case to 15 seconds (normal handshakes complete in 1-3s) so the loop
+   always recovers quickly and just retries on the next cycle.
+3. **Heap fragmentation from message processing.** Testing confirmed that handling and
+   printing a real message can noticeably fragment the heap (observed a single print drop
+   the largest available RAM block by roughly 50KB) — while idle polling alone does not.
+   Over many messages this can accumulate until the TLS handshake can no longer find a
+   large enough contiguous block. Fixed by proactively rebooting when the largest free
+   heap block drops below `MIN_LARGEST_FREE_BLOCK` (default 20KB) — a clean reboot fully
+   defragments RAM, and Telegram retains unread messages for 24h so nothing is lost.
 
-- New constant `IDLE_REBOOT_MS` (default `10 * 60 * 1000`) — change this to tune the idle timeout.
-- The idle timer resets every time a message arrives, so it never reboots while in active use.
-- No extra libraries required; behavior during normal use is unchanged.
-
-**Follow-up:** The idle reboot alone doesn't help if messages keep arriving often enough to
-constantly reset the idle timer — the heap still fragments from the once-a-second polling to
-Telegram even between messages. Added a second, unconditional safety net that reboots at least
-once every `MAX_UPTIME_MS` (default **6 hours**) regardless of chat activity, so the heap is
-guaranteed to be periodically cleared no matter how the bot is used.
+Also added lightweight serial diagnostics (`Free heap` / `Largest block` each cycle, and
+`getUpdates()` timing) to make future issues easier to diagnose without new instrumentation.
