@@ -8,6 +8,7 @@ What it can do?
 -  Auto WiFi reconnect
 -  Continuous message polling
 -  Clean formatted output (bold, centered header, wrapped text)
+-  Auto-recovery for 24/7 use (reboots to clear RAM after periods of inactivity)
 
 <img src="https://github.com/icalitulaci/Telegram-To-Do-List-Printer/blob/main/Telegram-To-Do-List-Printer.webp?raw=true" >
 
@@ -68,3 +69,22 @@ Printed: Jun 23 2026
 - Fail to connect/disconnect bluetooth printer? Try adjusting the delay
 - Why bother disconnecting bluetooth printer after each print? Because certain model of ESP32 cannot receive the telegram message if the bluetooth remains connected.
 - Format looks off --> can adjust the code in "ESC/POS Formating Parameters" and "Print Telegram Text"
+
+---
+
+## Changelog
+
+### Stability fix — bot stops responding after running for hours (memory / heap fragmentation)
+**Problem:** When left on 24/7, the bot would go silent after a number of hours. It stayed
+connected to WiFi but stopped reacting to Telegram messages. Cause: each secure (TLS) request
+to Telegram needs a large *contiguous* block of RAM, and over thousands of requests the heap
+slowly fragments until that block can no longer be allocated and `getUpdates()` silently fails.
+
+**Fix:** Added a simple, reliable auto-recovery — if no message is received for a set period
+(default **10 minutes**), the ESP32 reboots. A clean reboot fully clears and defragments RAM,
+so the bot is always working with a fresh heap. Telegram keeps unread messages for 24 hours, so
+anything sent during the ~3-second reboot is still delivered afterward — no messages are lost.
+
+- New constant `IDLE_REBOOT_MS` (default `10 * 60 * 1000`) — change this to tune the idle timeout.
+- The idle timer resets every time a message arrives, so it never reboots while in active use.
+- No extra libraries required; behavior during normal use is unchanged.

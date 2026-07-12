@@ -5,7 +5,7 @@
 #include <BluetoothSerial.h>
 
 // ================= CONFIG =================
-// This is the initial setup for the ESP32 Telegram Printer. 
+// This is the initial setup for the ESP32 Telegram Printer.
 
 #define WIFI_SSID        "Your_WiFi_SSID"
 #define WIFI_PASSWORD    "Your_WiFi_PASSWORD"
@@ -17,7 +17,7 @@
 #define PRINTER_PIN      "1234"  // Change to "" if your printer does not require a PIN
 
 
-// insert the chat IDs of the telegram user to avoid any ddos attacks. 
+// insert the chat IDs of the telegram user to avoid any ddos attacks.
 const String allowedChats[] = {
   " 123456789",  // Replace with your Telegram chat ID
   "987654321"   // Add more chat IDs as needed
@@ -39,12 +39,21 @@ bool isAuthorized(String chatId) {
 const unsigned long TELEGRAM_CHECK_INTERVAL = 1000; // this is for checking new messages in telegram
 const unsigned long BT_RECOVERY_DELAY = 2000; // this is for delay between bluetooth & wifi
 
+// ---------- Stability ----------
+// The TLS handshake to Telegram needs a large CONTIGUOUS block of RAM. Over many
+// hours of polling the heap slowly fragments until that block can't be allocated
+// and getUpdates() silently stops working (bot appears online but ignores messages).
+// A clean reboot fully clears/defragments the heap. Telegram keeps unread messages
+// for 24h, so nothing sent during the ~3s reboot is lost.
+const unsigned long IDLE_REBOOT_MS = 10UL * 60 * 1000; // reboot after 10 min with no messages
+
 
 WiFiClientSecure secured_client;
 UniversalTelegramBot bot(BOT_TOKEN, secured_client);
 BluetoothSerial SerialBT;
 
 unsigned long lastTelegramCheck = 0;
+unsigned long lastMessageTime = 0; // updated whenever a message is received
 
 
 
@@ -163,7 +172,7 @@ void leftAlign() {
   SerialBT.write(0);
 }
 
-void printWrapped(String text, int maxChars) { 
+void printWrapped(String text, int maxChars) {
 
   while (text.length() > 0) {
 
@@ -186,7 +195,7 @@ void printWrapped(String text, int maxChars) {
 
 
 // ---------- Print Telegram Text ----------
-// this helps to format the message that will be printed on the thermal printer. 
+// this helps to format the message that will be printed on the thermal printer.
 // In this scenario the message will only list what the user has sent along with the date of printing. You can modify this to your liking.
 
 void printTelegramText(String sender, String message) {
@@ -240,6 +249,9 @@ void processNewestMessage() {
     return;
   }
 
+  // A message arrived — reset the idle timer so we don't reboot mid-use.
+  lastMessageTime = millis();
+
   int newest = count - 1;
 
   String chatId = bot.messages[newest].chat_id;
@@ -271,6 +283,8 @@ void setup() {
 
   secured_client.setInsecure();
 
+  lastMessageTime = millis(); // start the idle countdown fresh
+
   Serial.println("Ready");
 }
 
@@ -289,5 +303,12 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     connectWiFi();
   }
-}
 
+  // If no message has been received for a while, reboot to clear/defragment RAM.
+  // This keeps the bot responsive 24/7 without any complex heap tracking.
+  if (millis() - lastMessageTime >= IDLE_REBOOT_MS) {
+    Serial.println("No messages for a while — restarting to clear RAM");
+    delay(200);
+    ESP.restart();
+  }
+}
