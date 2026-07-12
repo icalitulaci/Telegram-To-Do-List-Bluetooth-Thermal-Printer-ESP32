@@ -47,6 +47,11 @@ const unsigned long BT_RECOVERY_DELAY = 2000; // this is for delay between bluet
 // for 24h, so nothing sent during the ~3s reboot is lost.
 const unsigned long IDLE_REBOOT_MS = 10UL * 60 * 1000; // reboot after 10 min with no messages
 
+// Constant per-second polling fragments the heap even while messages keep arriving
+// (which keeps resetting the idle timer above). This is a second, unconditional
+// safety net: reboot at least once every MAX_UPTIME_MS no matter how active the chat is.
+const unsigned long MAX_UPTIME_MS = 6UL * 60 * 60 * 1000; // reboot at least every 6 hours
+
 
 WiFiClientSecure secured_client;
 UniversalTelegramBot bot(BOT_TOKEN, secured_client);
@@ -308,6 +313,15 @@ void loop() {
   // This keeps the bot responsive 24/7 without any complex heap tracking.
   if (millis() - lastMessageTime >= IDLE_REBOOT_MS) {
     Serial.println("No messages for a while — restarting to clear RAM");
+    delay(200);
+    ESP.restart();
+  }
+
+  // Even if messages keep arriving often enough to keep resetting the idle timer
+  // above, the constant per-second polling still fragments the heap over time.
+  // Force a reboot at least once every MAX_UPTIME_MS regardless of activity.
+  if (millis() >= MAX_UPTIME_MS) {
+    Serial.println("Max uptime reached — restarting to clear RAM");
     delay(200);
     ESP.restart();
   }

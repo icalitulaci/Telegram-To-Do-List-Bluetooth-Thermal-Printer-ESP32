@@ -88,3 +88,9 @@ anything sent during the ~3-second reboot is still delivered afterward — no me
 - New constant `IDLE_REBOOT_MS` (default `10 * 60 * 1000`) — change this to tune the idle timeout.
 - The idle timer resets every time a message arrives, so it never reboots while in active use.
 - No extra libraries required; behavior during normal use is unchanged.
+
+**Follow-up:** The idle reboot alone doesn't help if messages keep arriving often enough to
+constantly reset the idle timer — the heap still fragments from the once-a-second polling to
+Telegram even between messages. Added a second, unconditional safety net that reboots at least
+once every `MAX_UPTIME_MS` (default **6 hours**) regardless of chat activity, so the heap is
+guaranteed to be periodically cleared no matter how the bot is used.
